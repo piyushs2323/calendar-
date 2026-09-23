@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from datetime import date
 
@@ -7,7 +8,13 @@ from google.genai import types
 
 import config
 
-client = genai.Client(api_key=config.GEMINI_API_KEY)
+log = logging.getLogger("extractor")
+
+# 45s timeout so a stuck request fails instead of hanging forever
+client = genai.Client(
+    api_key=config.GEMINI_API_KEY,
+    http_options=types.HttpOptions(timeout=45000),
+)
 
 EXTRACT_PROMPT = """You extract buyer-account entries from a spoken, informal English voice note.
 The speaker gives an account they sold: a buyer's name, an email, and the date it was given (may be relative like "today", "yesterday", "3rd of this month").
@@ -24,8 +31,9 @@ Spoken emails: "at" means @, "dot" means a period. Write the email in normal for
 def _call_gemini(audio_bytes: bytes) -> dict:
     prompt = EXTRACT_PROMPT.format(today=date.today().isoformat())
     last_err = None
-    for attempt in range(3):
+    for attempt in range(2):
         try:
+            log.info("Gemini call attempt %d, model=%s", attempt + 1, config.GEMINI_MODEL)
             resp = client.models.generate_content(
                 model=config.GEMINI_MODEL,
                 contents=[
@@ -38,10 +46,12 @@ def _call_gemini(audio_bytes: bytes) -> dict:
                 ),
             )
             text = (resp.text or "").replace("```json", "").replace("```", "").strip()
+            log.info("Gemini raw reply: %s", text[:500])
             return json.loads(text)
-        except Exception as e:  # rate limit (429) or temporary error: wait and retry
+        except Exception as e:
             last_err = e
-            time.sleep(2 * (attempt + 1))
+            log.error("Gemini attempt %d failed: %r", attempt + 1, e)
+            time.sleep(2)
     raise last_err
 
 
@@ -51,4 +61,3 @@ def transcribe_and_extract(file_path: str):
     data = _call_gemini(audio_bytes)
     transcript = data.pop("transcript", "") or ""
     return transcript, data
-
