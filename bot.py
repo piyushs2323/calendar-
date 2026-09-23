@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date, datetime
 
@@ -46,7 +47,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text("Listening...")
     try:
-        transcript, fields = transcribe_and_extract(path)
+        transcript, fields = await asyncio.to_thread(transcribe_and_extract, path)
     except Exception as e:
         log.exception("extraction failed")
         await update.message.reply_text(f"Couldn't process that voice note: {e}")
